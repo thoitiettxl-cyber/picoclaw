@@ -1,0 +1,97 @@
+name: Sync Upstream & Build Android Binaries (CGO=0 & CGO=1)
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Hàng ngày sync & build test (chỉ artifacts)
+  workflow_dispatch:     # Manual: chỉ artifacts
+  push:
+    tags:
+      - 'v*-android*'    # Chỉ trigger release khi push tag kiểu vX.Y.Z-android*
+
+jobs:
+  sync-and-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Cần để tạo release & upload assets
+
+    steps:
+      - name: Checkout Fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync with Upstream
+        run: |
+          git remote add upstream https://github.com/sipeed/picoclaw.git || true
+          git fetch upstream
+          git checkout main
+          git merge upstream/main --allow-unrelated-histories --no-edit || echo "Merge conflict? Resolve manually if needed."
+          git push origin main || echo "Push skipped if no changes"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Go Mod Tidy & Download
+        run: |
+          go mod tidy
+          go mod download
+
+      # Build CGO=0
+      - name: Build Android arm64 - CGO=0
+        run: |
+          GOOS=android GOARCH=arm64 CGO_ENABLED=0 \
+            go build -v -trimpath -ldflags="-s -w" \
+            -o picoclaw-no-cgo \
+            ./cmd/server
+
+      # Setup NDK cho CGO=1
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27d
+
+      - name: Build Android arm64 - CGO=1
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          CC: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang
+          CXX: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang++
+        run: |
+          CGO_ENABLED=1 GOOS=android GOARCH=arm64 \
+            go build -v -trimpath -ldflags="-s -w" \
+            -o picoclaw-cgo \
+            ./cmd/server
+
+      - name: Verify Binaries
+        run: |
+          file picoclaw-no-cgo || true
+          file picoclaw-cgo || true
+          ls -lh picoclaw-*
+          echo "CGO=0 size: $(du -h picoclaw-no-cgo | cut -f1)"
+          echo "CGO=1 size: $(du -h picoclaw-cgo | cut -f1)"
+
+      # Upload Artifacts (cho manual/schedule)
+      - name: Upload Artifacts (Test Builds)
+        if: github.ref_type != 'tag'  # Chỉ khi không phải tag
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-binaries-${{ github.run_number }}
+          path: |
+            picoclaw-no-cgo
+            picoclaw-cgo
+          retention-days: 14
+
+      # Tạo Release CHỈ KHI push tag (tên release = "CLI Proxy API <tag>")
+      - name: Create GitHub Release with Binaries
+        if: startsWith(github.ref, 'refs/tags/')  # Chỉ chạy khi tag push
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}                  # Tag name = v1.0.1-android
+          name: CLI Proxy API ${{ github.ref_name }}        # Release title: CLI Proxy API v1.0.1-android
+          generate_release_notes: true                      # Auto generate notes từ commits
+          files: |
+            picoclaw-no-cgo
+            picoclaw-cgo
