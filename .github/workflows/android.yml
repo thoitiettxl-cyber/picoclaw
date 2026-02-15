@@ -45,7 +45,7 @@ jobs:
           GOOS=android GOARCH=arm64 CGO_ENABLED=0 \
             go build -v -trimpath -ldflags="-s -w" \
             -o picoclaw-no-cgo \
-            ./cmd/server
+            ./cmd/picoclaw
 
       # Setup NDK cho CGO=1
       - name: Setup Android NDK
@@ -63,7 +63,7 @@ jobs:
           CGO_ENABLED=1 GOOS=android GOARCH=arm64 \
             go build -v -trimpath -ldflags="-s -w" \
             -o picoclaw-cgo \
-            ./cmd/server
+            ./cmd/picoclaw
 
       - name: Verify Binaries
         run: |
