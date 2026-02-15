@@ -10,17 +10,9 @@ builds:
   - env:
       - CGO_ENABLED=0
     goos:
-      - linux
-      - windows
-      - darwin
-      - freebsd
+      - android
     goarch:
-      - amd64
       - arm64
-      - riscv64
-      - s390x
-      - mips64
-      - arm
     main: ./cmd/picoclaw
     ignore:
       - goos: windows
