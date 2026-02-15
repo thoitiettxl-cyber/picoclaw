@@ -39,6 +39,23 @@ jobs:
           go mod tidy
           go mod download
 
+      # ============ WORKSPACE EMBED STEP ============
+      - name: Generate Workspace Assets
+        run: |
+          # Run go generate to embed workspace
+          go generate ./...
+          
+          # Verify workspace was embedded
+          if [ -d "cmd/picoclaw/workspace" ]; then
+            echo "✅ Workspace embedded successfully"
+            ls -la cmd/picoclaw/workspace/
+          else
+            echo "⚠️ No workspace directory found, creating stub"
+            mkdir -p cmd/picoclaw/workspace
+            touch cmd/picoclaw/workspace/.gitkeep
+          fi
+      # ============================================
+
       # Build CGO=0
       - name: Build Android arm64 - CGO=0
         run: |
@@ -84,14 +101,35 @@ jobs:
             picoclaw-cgo
           retention-days: 14
 
-      # Tạo Release CHỈ KHI push tag (tên release = "CLI Proxy API <tag>")
+      # Tạo Release CHỈ KHI push tag (tên release = "PicoClaw <tag>")
       - name: Create GitHub Release with Binaries
         if: startsWith(github.ref, 'refs/tags/')  # Chỉ chạy khi tag push
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}                  # Tag name = v1.0.1-android
-          name: CLI Proxy API ${{ github.ref_name }}        # Release title: CLI Proxy API v1.0.1-android
+          name: PicoClaw ${{ github.ref_name }}             # Release title: PicoClaw v1.0.1-android
           generate_release_notes: true                      # Auto generate notes từ commits
           files: |
             picoclaw-no-cgo
             picoclaw-cgo
+```
+
+## Thay đổi chính:
+
+**Thêm step "Generate Workspace Assets" ngay sau "Go Mod Tidy & Download":**
+
+```yaml
+- name: Generate Workspace Assets
+  run: |
+    # Run go generate to embed workspace
+    go generate ./...
+    
+    # Verify workspace was embedded
+    if [ -d "cmd/picoclaw/workspace" ]; then
+      echo "✅ Workspace embedded successfully"
+      ls -la cmd/picoclaw/workspace/
+    else
+      echo "⚠️ No workspace directory found, creating stub"
+      mkdir -p cmd/picoclaw/workspace
+      touch cmd/picoclaw/workspace/.gitkeep
+    fi
