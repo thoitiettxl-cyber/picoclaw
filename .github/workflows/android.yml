@@ -112,24 +112,3 @@ jobs:
           files: |
             picoclaw-no-cgo
             picoclaw-cgo
-```
-
-## Thay đổi chính:
-
-**Thêm step "Generate Workspace Assets" ngay sau "Go Mod Tidy & Download":**
-
-```yaml
-- name: Generate Workspace Assets
-  run: |
-    # Run go generate to embed workspace
-    go generate ./...
-    
-    # Verify workspace was embedded
-    if [ -d "cmd/picoclaw/workspace" ]; then
-      echo "✅ Workspace embedded successfully"
-      ls -la cmd/picoclaw/workspace/
-    else
-      echo "⚠️ No workspace directory found, creating stub"
-      mkdir -p cmd/picoclaw/workspace
-      touch cmd/picoclaw/workspace/.gitkeep
-    fi
