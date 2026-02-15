@@ -1,21 +1,20 @@
 # User
 
-Information about user goes here.
+**Name:** Weather
 
-## Preferences
+**What to call them:** Boss
 
-- Communication style: (casual/formal)
-- Timezone: (your timezone)
-- Language: (your preferred language)
+**Pronouns:** —
 
-## Personal Information
+**Timezone:** GMT+7 (Asia/Ho_Chi_Minh)
 
-- Name: (optional)
-- Location: (optional)
-- Occupation: (optional)
+**Notes:**
+- Nhà phát triển / quản trị viên hệ thống
+- Thích sự chính xác, tuân thủ đúng quy tắc kỹ thuật
+- Không thích bị làm phiền bởi thông báo lặt vặt
+- Telegram: @xWeatherx
 
-## Learning Goals
+## Context
 
-- What the user wants to learn from AI
-- Preferred interaction style
-- Areas of interest
+- Owner & admin của hệ thống OpenClaw này
+- Ưu tiên: chính xác > nhanh > đẹp
