@@ -2,17 +2,17 @@ name: Sync Upstream & Build Android Binaries (CGO=0 & CGO=1)
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # Hàng ngày sync & build test (chỉ artifacts)
-  workflow_dispatch:     # Manual: chỉ artifacts
+    - cron: '0 0 * * *'
+  workflow_dispatch:
   push:
     tags:
-      - 'v*-android*'    # Chỉ trigger release khi push tag kiểu vX.Y.Z-android*
+      - 'v*-android*'
 
 jobs:
   sync-and-build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Cần để tạo release & upload assets
+      contents: write
 
     steps:
       - name: Checkout Fork
@@ -22,7 +22,7 @@ jobs:
 
       - name: Sync with Upstream
         run: |
-          git remote add upstream https://github.com/thoitiettxl-cyber/picoclaw.git || true
+          git remote add upstream https://github.com/sipeed/picoclaw.git || true
           git fetch upstream
           git checkout main
           git merge upstream/main --allow-unrelated-histories --no-edit || echo "Merge conflict? Resolve manually if needed."
@@ -39,32 +39,82 @@ jobs:
           go mod tidy
           go mod download
 
-      # ============ WORKSPACE EMBED STEP ============
-      - name: Generate Workspace Assets
+      # ============ PATCH SOURCE FOR ANDROID BUILD ============
+      - name: Patch main.go for Android Build
         run: |
-          # Run go generate to embed workspace
-          go generate ./...
+          cd cmd/picoclaw
           
-          # Verify workspace was embedded
-          if [ -d "cmd/picoclaw/workspace" ]; then
-            echo "✅ Workspace embedded successfully"
-            ls -la cmd/picoclaw/workspace/
-          else
-            echo "⚠️ No workspace directory found, creating stub"
-            mkdir -p cmd/picoclaw/workspace
-            touch cmd/picoclaw/workspace/.gitkeep
-          fi
-      # ============================================
+          # Backup original file
+          cp main.go main.go.backup
+          
+          # Create workspace_stub.go for Android
+          cat > workspace_stub.go << 'EOF'
+          //go:build android
+          // +build android
+          
+          package main
+          
+          import "embed"
+          
+          // Empty embed.FS for Android builds (no workspace embedding)
+          var embeddedFiles embed.FS
+          
+          const hasEmbeddedWorkspace = false
+          EOF
+          
+          # Create workspace_embed.go with original embed logic
+          cat > workspace_embed.go << 'EOF'
+          //go:build !android
+          // +build !android
+          
+          package main
+          
+          import "embed"
+          
+          //go:generate cp -r ../../workspace .
+          //go:embed workspace
+          var embeddedFiles embed.FS
+          
+          const hasEmbeddedWorkspace = true
+          EOF
+          
+          # Patch main.go - remove embed directives and add hasEmbeddedWorkspace constant
+          sed -i '/^\/\/go:generate cp -r \.\.\/\.\.\/workspace \./d' main.go
+          sed -i '/^\/\/go:embed workspace$/d' main.go
+          sed -i 's/^var embeddedFiles embed\.FS$/\/\/ embeddedFiles is defined in workspace_embed.go or workspace_stub.go based on build tags/' main.go
+          
+          # Add hasEmbeddedWorkspace check in copyEmbeddedToTarget function
+          # Find the function and add early return for Android
+          awk '
+          /^func copyEmbeddedToTarget\(targetDir string\) error \{/ {
+            print $0
+            print "\tif !hasEmbeddedWorkspace {"
+            print "\t\t// Android build - no embedded workspace"
+            print "\t\treturn os.MkdirAll(targetDir, 0755)"
+            print "\t}"
+            print ""
+            next
+          }
+          { print }
+          ' main.go > main.go.tmp && mv main.go.tmp main.go
+          
+          echo "✅ Source patched for Android build"
+          echo ""
+          echo "Created files:"
+          ls -la workspace_*.go
+          echo ""
+          echo "Modified main.go (showing embed section):"
+          grep -A 5 -B 5 "embeddedFiles" main.go || echo "Embed directives removed"
 
-      # Build CGO=0
+      # Build CGO=0 with android tag
       - name: Build Android arm64 - CGO=0
         run: |
+          cd cmd/picoclaw
           GOOS=android GOARCH=arm64 CGO_ENABLED=0 \
-            go build -v -trimpath -ldflags="-s -w" \
-            -o picoclaw-no-cgo \
-            ./cmd/picoclaw
+            go build -v -trimpath -tags=android -ldflags="-s -w" \
+            -o ../../picoclaw-no-cgo
 
-      # Setup NDK cho CGO=1
+      # Setup NDK for CGO=1
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
         id: setup-ndk
@@ -77,22 +127,28 @@ jobs:
           CC: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang
           CXX: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang++
         run: |
+          cd cmd/picoclaw
           CGO_ENABLED=1 GOOS=android GOARCH=arm64 \
-            go build -v -trimpath -ldflags="-s -w" \
-            -o picoclaw-cgo \
-            ./cmd/picoclaw
+            go build -v -trimpath -tags=android -ldflags="-s -w" \
+            -o ../../picoclaw-cgo
 
       - name: Verify Binaries
         run: |
           file picoclaw-no-cgo || true
           file picoclaw-cgo || true
           ls -lh picoclaw-*
-          echo "CGO=0 size: $(du -h picoclaw-no-cgo | cut -f1)"
-          echo "CGO=1 size: $(du -h picoclaw-cgo | cut -f1)"
+          echo ""
+          echo "📊 Build Results:"
+          echo "  CGO=0 size: $(du -h picoclaw-no-cgo | cut -f1)"
+          echo "  CGO=1 size: $(du -h picoclaw-cgo | cut -f1)"
+          echo ""
+          echo "Binary info:"
+          echo "  no-cgo: $(file picoclaw-no-cgo)"
+          echo "  cgo: $(file picoclaw-cgo)"
 
-      # Upload Artifacts (cho manual/schedule)
+      # Upload Artifacts (for manual/schedule runs)
       - name: Upload Artifacts (Test Builds)
-        if: github.ref_type != 'tag'  # Chỉ khi không phải tag
+        if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v4
         with:
           name: android-binaries-${{ github.run_number }}
@@ -101,14 +157,14 @@ jobs:
             picoclaw-cgo
           retention-days: 14
 
-      # Tạo Release CHỈ KHI push tag (tên release = "PicoClaw <tag>")
+      # Create Release ONLY when pushing tags
       - name: Create GitHub Release with Binaries
-        if: startsWith(github.ref, 'refs/tags/')  # Chỉ chạy khi tag push
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}                  # Tag name = v1.0.1-android
-          name: PicoClaw ${{ github.ref_name }}             # Release title: PicoClaw v1.0.1-android
-          generate_release_notes: true                      # Auto generate notes từ commits
+          tag_name: ${{ github.ref_name }}
+          name: PicoClaw ${{ github.ref_name }}
+          generate_release_notes: true
           files: |
             picoclaw-no-cgo
             picoclaw-cgo
