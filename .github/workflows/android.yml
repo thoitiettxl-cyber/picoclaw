@@ -44,52 +44,69 @@ jobs:
         run: |
           cd cmd/picoclaw
           
-          # Backup original file
-          cp main.go main.go.backup
-          
-          # Create workspace_stub.go for Android
-          cat > workspace_stub.go << 'EOF'
-          //go:build android
-          // +build android
-          
-          package main
-          
-          import "embed"
-          
-          // Empty embed.FS for Android builds (no workspace embedding)
-          var embeddedFiles embed.FS
-          
-          const hasEmbeddedWorkspace = false
-          EOF
-          
-          # Create workspace_embed.go with original embed logic
+          # Create workspace_embed.go with full embed logic for non-Android builds
           cat > workspace_embed.go << 'EOF'
           //go:build !android
           // +build !android
-          
+
           package main
-          
+
           import "embed"
-          
+
           //go:generate cp -r ../../workspace .
           //go:embed workspace
           var embeddedFiles embed.FS
-          
+
           const hasEmbeddedWorkspace = true
           EOF
           
-          # Patch main.go - remove embed directives and add hasEmbeddedWorkspace constant
-          sed -i '/^\/\/go:generate cp -r \.\.\/\.\.\/workspace \./d' main.go
-          sed -i '/^\/\/go:embed workspace$/d' main.go
-          sed -i 's/^var embeddedFiles embed\.FS$/\/\/ embeddedFiles is defined in workspace_embed.go or workspace_stub.go based on build tags/' main.go
+          # Create workspace_stub.go for Android builds (no embedding)
+          cat > workspace_stub.go << 'EOF'
+          //go:build android
+          // +build android
+
+          package main
+
+          import "embed"
+
+          // Empty embed.FS for Android builds (workspace not embedded)
+          var embeddedFiles embed.FS
+
+          const hasEmbeddedWorkspace = false
+          EOF
           
-          # Add hasEmbeddedWorkspace check in copyEmbeddedToTarget function
-          # Find the function and add early return for Android
+          # Remove embed-related lines from main.go since they're now in workspace_embed.go
+          sed -i '/^\/\/go:generate cp -r \.\.\/\.\.\/workspace \.$/d' main.go
+          sed -i '/^\/\/go:embed workspace$/d' main.go
+          sed -i '/^var embeddedFiles embed\.FS$/d' main.go
+          
+          # Remove standalone "embed" import if it exists (it's now in workspace_*.go)
+          # This handles the case where embed is imported but not used after removing embeddedFiles
+          sed -i '/"embed"$/d' main.go
+          
+          # Also handle case where embed might be in import block
+          awk '
+          BEGIN { in_import = 0; skip_next_close = 0 }
+          /^import \(/ { in_import = 1; print; next }
+          in_import && /^\)/ { 
+            in_import = 0
+            if (!skip_next_close) print
+            skip_next_close = 0
+            next
+          }
+          in_import && /^\t"embed"$/ { 
+            skip_next_close = 0
+            next 
+          }
+          { print }
+          ' main.go > main.go.tmp && mv main.go.tmp main.go
+          
+          # Add hasEmbeddedWorkspace check at the beginning of copyEmbeddedToTarget
           awk '
           /^func copyEmbeddedToTarget\(targetDir string\) error \{/ {
             print $0
+            print "\t// Skip embedding for Android builds"
             print "\tif !hasEmbeddedWorkspace {"
-            print "\t\t// Android build - no embedded workspace"
             print "\t\treturn os.MkdirAll(targetDir, 0755)"
             print "\t}"
             print ""
@@ -100,11 +117,14 @@ jobs:
           
           echo "✅ Source patched for Android build"
           echo ""
-          echo "Created files:"
+          echo "📁 Created build-tag files:"
           ls -la workspace_*.go
           echo ""
-          echo "Modified main.go (showing embed section):"
-          grep -A 5 -B 5 "embeddedFiles" main.go || echo "Embed directives removed"
+          echo "🔍 Verification - embed removed from main.go:"
+          grep -c "embed" main.go || echo "No embed references in main.go (✓)"
+          echo ""
+          echo "🔍 Verification - embeddedFiles in workspace files:"
+          grep "embeddedFiles" workspace_*.go
 
       # Build CGO=0 with android tag
       - name: Build Android arm64 - CGO=0
@@ -142,9 +162,7 @@ jobs:
           echo "  CGO=0 size: $(du -h picoclaw-no-cgo | cut -f1)"
           echo "  CGO=1 size: $(du -h picoclaw-cgo | cut -f1)"
           echo ""
-          echo "Binary info:"
-          echo "  no-cgo: $(file picoclaw-no-cgo)"
-          echo "  cgo: $(file picoclaw-cgo)"
+          echo "✅ Both Android binaries built successfully without workspace embedding"
 
       # Upload Artifacts (for manual/schedule runs)
       - name: Upload Artifacts (Test Builds)
